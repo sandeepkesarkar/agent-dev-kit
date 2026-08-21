@@ -73,8 +73,8 @@ The core idea is independent of any specific tool:
    through the same issue → PR → human-merge flow and ordinary human review —
    see [FR-011](specs/github-task-workflow.md) for the exact boundary.
 4. **Human-gated merge only.** No automation ever merges a PR. A human reads
-   the PR description, the tests, and the cross-vendor review comment, and
-   merges by hand — or doesn't.
+   the PR description, the tests, and — for code PRs — the cross-vendor
+   review comment, and merges by hand — or doesn't.
 
 This repo's shipped default for step 3 is **Claude Code implements, Codex
 reviews** — a concrete, opinionated instance of "different vendor reviews,"
@@ -99,8 +99,10 @@ current status of that gap. What *is* fully implemented:
 - **`config.yaml`** (repo root) — Polly's own orchestrator config: the
   seven-worker roster, dispatch rules, guardrails.
 - **`agents/`** — one sub-agent bundle per coding vendor: `claude_code`,
-  `codex`, `opencode`, `cursor`, `hermes`, `agy`, `pi`. Each implements,
-  reviews, or explores a scoped task in its own git worktree.
+  `codex`, `opencode`, `cursor`, `hermes`, and `agy` each implement,
+  cross-vendor review, or explore a scoped task in its own git worktree.
+  `pi` is scoped to review / explore / search only — it is never dispatched
+  as a fanout implementer (see [`skills/fanout/SKILL.md`](skills/fanout/SKILL.md)).
 - **`skills/`** — the three orchestration skills Polly composes at runtime:
   - [`cross-review`](skills/cross-review/SKILL.md) — verify a PR's diff with
     an independent, different-vendor sub-agent.

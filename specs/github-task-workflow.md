@@ -20,17 +20,26 @@ delegated to agents.
 
 ## Implementation status
 
-This spec describes the target shape of the full workflow. This repo
-currently ships the **execution and review** half — `agent-ready` issue →
-worker agent → PR → cross-vendor review (see `skills/fanout/SKILL.md` and
-`skills/cross-review/SKILL.md`) → human merge. It does **not** yet ship the
-**decomposition** half (spec → proposed issue breakdown → human approval →
-issues filed). Everywhere below that reads as a MUST for decomposition
-(FR-001, FR-009, SC-001) describes the intended target, not a shipped
-capability — see the Bootstrapping Note at the bottom of this spec. Treat
-those specific items as roadmap requirements; everything else in this spec
-(labels, worker pickup, PR contents, human-merge-only, cross-vendor review)
-is implemented and shipped in this repo today.
+This spec describes the target shape of the full workflow. This repo ships
+the middle of that pipeline — **explicit dispatch of an already-identified
+task** through implement → cross-vendor review → human merge (see
+`skills/fanout/SKILL.md` and `skills/cross-review/SKILL.md`) — but **not**
+either end of it:
+
+- **Decomposition** (spec → proposed issue breakdown → human approval →
+  issues filed) — no decomposition skill ships in this repo. See FR-001,
+  FR-009, SC-001, and the Bootstrapping Note at the bottom of this spec.
+- **Issue pickup** (a worker agent autonomously detecting `agent-ready`
+  issues on some cadence, or an equivalent documented manual-trigger flow) —
+  this repo ships no poller and no `agent-ready`-detection logic of any
+  kind, automated or manual. See FR-004.
+
+Concretely: nothing in this repo autonomously discovers *what* to work on.
+Once a human (or a consumer's own tooling) has identified a task — whether
+that's an approved issue or just a task description — dispatching it through
+`fanout`/`cross-review`/`investigate` to implement, review, and merge it
+works today. Everything upstream of "a task has been identified" is a
+documented gap, not a shipped capability.
 
 ## Out of Scope (this iteration)
 
@@ -48,8 +57,13 @@ existing dispatch-to-a-declared-roster orchestrator.
 - An orchestrator agent that autonomously triages and dispatches work
   *without* a human first approving the issue breakdown — later evolution.
 - Auto-merge of any kind.
-- Multi-model routing (including local models) — routing logic should not
-  preclude this later, but it isn't built now.
+- Autonomous, poller-level multi-model routing (including local models) —
+  i.e. a future triage layer choosing models/vendors *without* per-dispatch
+  human or agent judgment. Per-dispatch model routing is already shipped
+  today (`config.yaml`'s `smart_routing_harness`, `args.model` on every
+  `sys_session_send`, and `sys_advise_models`) — this bullet is about a
+  higher-level autonomous routing policy, not a gap in that existing
+  mechanism.
 
 ## Roles
 
@@ -100,11 +114,13 @@ decomposition agent applies.
 - **FR-003**: The label glossary MUST be centralized in this repo's
   `specs/labels.md`; consumer repos reference it rather than keeping their
   own copy.
-- **FR-004**: The worker agent MUST run on some polling cadence appropriate to
-  the consumer's environment, with a manual trigger also supported for
+- **FR-004** *(not yet implemented — see Implementation status above)*: The
+  worker agent MUST run on some polling cadence appropriate to the
+  consumer's environment, with a manual trigger also supported for
   on-demand checks. This spec is deliberately silent on the concrete scheduler
   (cron, launchd, a CI cron trigger, a hosted scheduler) — that choice is
-  environment-specific and belongs in the consumer repo, not here.
+  environment-specific and belongs in the consumer repo, not here. No poller
+  or `agent-ready`-detection logic, automated or manual, ships in this repo.
 - **FR-005**: All merges MUST be performed by a human. No automated merging,
   in any repo, for any issue type.
 - **FR-006**: Every PR from a worker agent MUST include: a one-line summary
@@ -170,11 +186,20 @@ decomposition agent applies.
 
 ## Bootstrapping Note
 
-The decomposition skill described in FR-001/FR-009 doesn't exist in this
-repo yet — it's a known gap, not an oversight (see Implementation status
-above). Until it's built, a spec's first pass into issues has to be done by
-hand, or with ad-hoc agent help but no packaged skill. Once the skill exists
-here, it becomes the front door this workflow is designed around; until
-then, everything downstream of "an `agent-ready` issue exists" (worker
-pickup, PR, cross-vendor review, human merge) works today regardless of how
-that issue got created.
+Two capabilities described in this spec don't exist in this repo yet — both
+known gaps, not oversights (see Implementation status above):
+
+- The **decomposition skill** (FR-001/FR-009): a spec's first pass into
+  issues has to be done by hand, or with ad-hoc agent help but no packaged
+  skill, until this is built.
+- **Issue pickup** (FR-004): there is no poller and no `agent-ready`
+  detection — automated or manual — shipped here. A human (or a consumer's
+  own tooling) has to identify which task to work on and hand it to a
+  worker explicitly.
+
+What works today, regardless of how a task got identified or an issue got
+created: dispatching that already-identified task through
+`fanout`/`cross-review` — implement, cross-vendor review, human merge. Once
+both gaps above are closed, the same dispatch mechanics become the back half
+of a fully autonomous "approved spec in, merged PR out" pipeline; today they
+are the whole of what this repo actually automates.

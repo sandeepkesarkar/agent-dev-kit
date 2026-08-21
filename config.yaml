@@ -331,8 +331,10 @@ terminals:
 
 tools:
   # Coding sub-agents — see agents/<name>/. claude_code, codex, opencode,
-  # cursor, hermes, and agy are real CLI coding harnesses; pi is a headless
-  # multi-model worker. Each implements, reviews (cross-vendor), and explores.
+  # cursor, hermes, and agy are real CLI coding harnesses that implement,
+  # cross-vendor review, or explore a scoped task. pi is a headless
+  # multi-model worker scoped to review / explore / search only — it is
+  # never dispatched as a fanout implementer (see skills/fanout/SKILL.md).
   agents:
     - claude_code
     - codex
