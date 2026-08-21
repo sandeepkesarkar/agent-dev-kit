@@ -30,14 +30,25 @@ Consumers pull two different kinds of content from this repo, through two
 different mechanisms, because the two kinds of content have fundamentally
 different discovery and versioning requirements.
 
-### Skills → global symlink (native discovery, unpinned, shared)
+### Skills → global symlinks, one per skill (native discovery, unpinned, shared)
 
-Skills (`skills/<name>/SKILL.md`) are reached by symlinking
-`~/.agents/skills/agent-dev-kit` to a local checkout of this repo. Omnigent
-has a real, native, machine-global skill-discovery mechanism — it looks under
-`~/.agents/skills/` (analogous to `~/.claude/skills/` for Claude Code) and
-picks up any skill it finds there, regardless of which repo or bundle
-invoked it. Because that discovery is genuinely global:
+Skills (`skills/<name>/SKILL.md`) are reached by symlinking each individual
+skill directory under `~/.agents/skills/` — e.g.
+`~/.agents/skills/cross-review -> <checkout>/skills/cross-review` — to a
+local checkout of this repo. Omnigent has a real, native, machine-global
+skill-discovery mechanism (`omnigent.spec.parser.discover_host_skills`,
+confirmed by reading the installed package's source and by running it
+directly against a real symlinked directory): it scans the **immediate
+children** of `~/.agents/skills/` (analogous to `~/.claude/skills/` for
+Claude Code), and requires each child to directly contain its own
+`SKILL.md`. That means the symlink has to land at exactly that depth — a
+single symlink to this repo's whole `skills/` directory (one level too
+shallow) is silently invisible to the parser, since it never finds
+`<symlink>/SKILL.md` at the child level. Confirmed both ways empirically:
+a per-skill symlink layout was discovered correctly (3/3 skills), the
+single-directory layout was not. Symlinks themselves are not the problem —
+the parser's `is_dir()`/`.exists()` calls follow them fine — only the depth
+mattered. Because discovery is otherwise genuinely global:
 
 - One checkout serves every project on the machine.
 - Updates are manual (`git pull` in the checkout) and immediately visible
@@ -48,30 +59,42 @@ invoked it. Because that discovery is genuinely global:
   discipline doesn't usually want to differ project-to-project the way
   dependency versions do.
 
-### Sub-agent bundles → pinned git submodule (per-repo, versioned)
+### Sub-agent bundles → pinned git submodule (per-repo, versioned, recommended)
 
 Sub-agent bundle configs (`config.yaml` at this repo's root, plus
 `agents/<name>/config.yaml`) are reached via a git submodule checked out at
 `.agents/agent-dev-kit/` inside each consumer repo, with the consumer's own
 `.omnigent/config.yaml` pointing `default_agent` at that submodule path.
 
-This is the ONLY viable mechanism, not a stylistic choice, because of a
-concrete constraint in Omnigent's own bundle loader: **the parser requires an
-agent bundle root to physically contain `config.yaml` at its root, with
-`agents/<name>/config.yaml` as direct children** — no `config_path`
-indirection, no walking up from a nested path, no symlink-then-redirect. This
-was confirmed by reading Omnigent's own bundle-resolution source, not
-inferred from docs. Because the bundle root must be a real, physical
-directory containing `config.yaml` at its top level, a global unpinned
-symlink (as used for skills) cannot serve this purpose — the bundle loader
-needs a concrete, addressable root per consuming repo, and a git submodule is
-the standard mechanism for "a versioned, pinned copy of another repo's
-content, living at a fixed path inside this repo."
+This choice is driven by a real constraint in Omnigent's own bundle loader,
+confirmed by reading `omnigent.spec.parser.parse` /
+`_discover_sub_agents` / `omnigent.spec.__init__._find_omnigent_yaml_in_dir`:
+**the parser requires an agent bundle root to contain `config.yaml` at its
+own top level, with `agents/<name>/config.yaml` as direct children** — no
+`config_path` indirection, no walking up from a nested path. That part of
+the original claim holds.
 
-The practical consequence: every consumer repo can pin a different commit of
-`agent-dev-kit`'s agent bundles (so a breaking change to, say, `codex`'s
-harness config doesn't silently roll out to every project at once), while
-still sharing exactly the same skill prose everywhere via the global symlink.
+What does **not** hold, and was corrected after empirical verification: the
+loader does not reject symlinks. We ran `omnigent.spec.parser.parse` and
+`omnigent.spec.validator.validate` directly against a bundle root that was
+itself a symlink to a real checkout (`.agents/agent-dev-kit -> ~/src/agent-dev-kit`),
+and it parsed and validated cleanly — all 7 sub-agents and all 3 bundled
+skills discovered correctly. The loader's `agent_dir.is_dir()` /
+`config_yaml.exists()` calls are plain `pathlib` calls, which follow symlinks
+by default; there's no explicit `is_symlink()` check anywhere in the
+discovery path that would reject one. So a bare symlink to a shared local
+checkout *does* work as a bundle root today — it is a simpler alternative,
+not a broken one.
+
+We still recommend the **git submodule** over a bare symlink, because it's
+about independent versioning, not loader compatibility: a submodule lets
+each consumer repo pin a different commit of `agent-dev-kit`'s agent bundles
+(so a breaking change to, say, `codex`'s harness config rolls out to one
+repo at a time), whereas a symlink to one shared local checkout ties every
+consumer repo using that checkout to whatever commit it happens to be on —
+the same trade-off skills deliberately accept via the global symlink. For
+bundles specifically, independent per-repo pinning is worth the extra
+submodule step; for skills, sharing one always-current copy is the point.
 
 ## Why not submodule everything, or symlink everything?
 
@@ -79,10 +102,15 @@ still sharing exactly the same skill prose everywhere via the global symlink.
   independently, defeating the point of skills being a shared, always-current
   discipline — and it would fight Omnigent's own global discovery path rather
   than using it.
-- Symlinking bundles globally is not possible: Omnigent's bundle loader has
-  no global-bundle discovery mechanism analogous to `~/.agents/skills/`, and
-  even if one existed, a single global bundle would prevent per-repo pinning,
-  which is exactly what makes bundle changes safe to roll out gradually.
+- Symlinking bundles globally (one shared bundle for every project on the
+  machine, the way skills work) is possible mechanically but undesirable:
+  Omnigent's bundle loader has no global-bundle discovery mechanism analogous
+  to `~/.agents/skills/` — a bundle is always addressed by an explicit
+  `default_agent` path per consumer repo — and even if it did, a single
+  global bundle would prevent per-repo pinning, which is exactly what makes
+  bundle changes safe to roll out gradually. A per-repo symlink (rather than
+  a per-repo submodule) remains a legitimate lighter-weight option for a
+  single-user, single-checkout setup that doesn't need independent pinning.
 
 ## Reference implementation: Omnigent / Polly
 

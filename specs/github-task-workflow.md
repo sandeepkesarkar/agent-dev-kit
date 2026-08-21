@@ -18,11 +18,35 @@ delegated to agents.
 - Applies to **all** work types, not just code: specs, docs, and content flow
   through the same issue-based process, distinguished only by label.
 
+## Implementation status
+
+This spec describes the target shape of the full workflow. This repo
+currently ships the **execution and review** half — `agent-ready` issue →
+worker agent → PR → cross-vendor review (see `skills/fanout/SKILL.md` and
+`skills/cross-review/SKILL.md`) → human merge. It does **not** yet ship the
+**decomposition** half (spec → proposed issue breakdown → human approval →
+issues filed). Everywhere below that reads as a MUST for decomposition
+(FR-001, FR-009, SC-001) describes the intended target, not a shipped
+capability — see the Bootstrapping Note at the bottom of this spec. Treat
+those specific items as roadmap requirements; everything else in this spec
+(labels, worker pickup, PR contents, human-merge-only, cross-vendor review)
+is implemented and shipped in this repo today.
+
 ## Out of Scope (this iteration)
+
+Scoped to the **poller/automation** iteration of this workflow — i.e. what a
+scheduled worker agent does or doesn't do on its own. This is not a
+statement about the orchestrator this repo ships as its reference
+implementation: Polly (`config.yaml` + `agents/`) is itself a multi-worker
+orchestrator with routing and model-advice logic, and shipping it is not a
+contradiction of the items below — those describe a *future automated
+triage layer* sitting in front of the human-approved issue queue, not the
+existing dispatch-to-a-declared-roster orchestrator.
 
 - Event-driven pickup (webhooks/GitHub Actions) — later evolution of the
   pickup mechanism.
-- Orchestrator agent that triages and dispatches — later evolution.
+- An orchestrator agent that autonomously triages and dispatches work
+  *without* a human first approving the issue breakdown — later evolution.
 - Auto-merge of any kind.
 - Multi-model routing (including local models) — routing logic should not
   preclude this later, but it isn't built now.
@@ -67,9 +91,9 @@ decomposition agent applies.
 
 ## Functional Requirements
 
-- **FR-001**: The decomposition agent MUST propose an issue breakdown from a
-  spec and MUST NOT create any issue without explicit human approval of the
-  breakdown.
+- **FR-001** *(not yet implemented — see Implementation status above)*: The
+  decomposition agent MUST propose an issue breakdown from a spec and MUST
+  NOT create any issue without explicit human approval of the breakdown.
 - **FR-002**: Every issue MUST carry at least one type label (`spec`, `code`,
   `docs`, `content`) plus applicable workflow-state labels (`agent-ready`,
   `needs-approval`) — see [labels.md](labels.md).
@@ -94,9 +118,10 @@ decomposition agent applies.
   "Mermaid diagrams where applicable" MUST appear as standing acceptance
   criteria on every issue the decomposition agent creates — not just as an
   informal norm.
-- **FR-009**: The spec→issues capability MUST be packaged as a reusable,
-  invocable skill/command — the front door to this workflow — usable from any
-  consumer repo.
+- **FR-009** *(not yet implemented — see Implementation status above)*: The
+  spec→issues capability MUST be packaged as a reusable, invocable
+  skill/command — the front door to this workflow — usable from any consumer
+  repo.
 - **FR-010**: The workflow MUST handle non-code deliverables (specs, docs,
   content) through the same issue-based flow, distinguished only by label.
 - **FR-011**: Every code PR MUST carry a cross-vendor review (from a vendor
@@ -118,8 +143,9 @@ decomposition agent applies.
 
 ## Success Criteria
 
-- **SC-001**: A spec goes from "approved" to "issues filed on GitHub" via a
-  single skill invocation plus one human approval step.
+- **SC-001** *(not yet met — depends on FR-001/FR-009, not yet implemented)*:
+  A spec goes from "approved" to "issues filed on GitHub" via a single skill
+  invocation plus one human approval step.
 - **SC-002**: 100% of agent-authored PRs carry the required narration (issue
   comment + PR description) before merge.
 - **SC-003**: Every merged PR was reviewable in under 15 minutes (spot-checked
@@ -141,3 +167,14 @@ decomposition agent applies.
   a consumer-environment decision, not part of this spec.
 - This spec assumes no prior workflow in the consumer repo; issue-based
   execution is additive.
+
+## Bootstrapping Note
+
+The decomposition skill described in FR-001/FR-009 doesn't exist in this
+repo yet — it's a known gap, not an oversight (see Implementation status
+above). Until it's built, a spec's first pass into issues has to be done by
+hand, or with ad-hoc agent help but no packaged skill. Once the skill exists
+here, it becomes the front door this workflow is designed around; until
+then, everything downstream of "an `agent-ready` issue exists" (worker
+pickup, PR, cross-vendor review, human merge) works today regardless of how
+that issue got created.

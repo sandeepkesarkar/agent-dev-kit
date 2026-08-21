@@ -1,9 +1,53 @@
 # agent-dev-kit
 
 A spec-first, small-PR, cross-vendor-reviewed workflow for getting AI coding
-agents to do real work safely — plus a working reference implementation of
-that workflow on top of [Omnigent](https://github.com/omnigent-ai/omnigent)
-and its Polly orchestrator.
+agents to do real work under human review — plus a working reference
+implementation of that workflow on top of
+[Omnigent](https://github.com/omnigent-ai/omnigent) and its Polly
+orchestrator.
+
+## Trust model — read this before adopting
+
+"Cross-vendor reviewed" and "human-gated merge" describe the *review and
+merge* gates, not a sandbox. **This workflow does not run untrusted agents in
+a sandbox by default.** As shipped, every sub-agent bundle in `agents/` runs
+with the caller's full process environment (`os_env: { type: caller_process,
+sandbox: { type: none } }`), and several individual settings deliberately
+widen that further:
+
+- `permission_mode: auto` (`claude_code`) and `yolo: true` (`cursor`) —
+  headless workers can't answer interactive approval prompts, so these
+  auto-approve actions rather than blocking on a human who isn't there.
+- `gate_pushes: false` (every agent bundle, and the root `config.yaml`) —
+  implementers push branches and open PRs unattended; only the catastrophic
+  `blast_radius` set (force-push, `rm -rf /`, hard-reset to a remote ref)
+  is still denied.
+- `spawn: true` (root `config.yaml`) — Polly can launch additional
+  self-defined child sessions beyond the declared roster.
+
+None of this is an oversight — it's what makes autonomous, unattended
+dispatch across seven coding vendors actually work. But it means an agent in
+this workflow is executing repo content (and, once wired to GitHub issues,
+*issue* content — text anyone with issue-creation access can write) with
+host-level process access and no default sandbox boundary. Treat that
+content as untrusted input to a fairly privileged process. Concretely:
+
+- Run this on a disposable VM, container, or an account with no credentials
+  or secrets you wouldn't hand to code you haven't read — not on a
+  workstation with your primary SSH keys, cloud credentials, or password
+  manager unlocked in the same environment.
+- Prefer running each worker's `os_env.sandbox` under an actual sandbox
+  (Omnigent supports sandbox types beyond `none`) when your deployment can
+  afford the friction; this repo ships the permissive `none` baseline so the
+  reference implementation works out of the box, not because sandboxing is
+  undesirable.
+- Add your own `cost_budget` guardrail (see the note near the bottom of
+  `config.yaml`) before pointing this at a paid provider account.
+
+If you want a stricter baseline instead of auditing every setting yourself,
+fork the `agents/` bundles and flip `permission_mode`/`yolo`/`gate_pushes`
+per-agent — the "trusted, hands-off workstation" profile shipped here is one
+opinionated default, not the only safe configuration.
 
 ## The pattern
 
@@ -18,12 +62,16 @@ The core idea is independent of any specific tool:
    both *type* (`code`, `docs`, `spec`, `content`) and *workflow state*
    (`agent-ready`, `in-progress`, `needs-approval`). See
    [`specs/labels.md`](specs/labels.md).
-3. **One implementer, one different-vendor reviewer, every PR.** An agent
-   implements a task and opens its own PR. A *different* agent — always a
-   different vendor, never the implementer reviewing itself — checks that PR
-   against its acceptance contract before it's marked ready for human review.
-   Same-vendor self-review is never sufficient; cross-vendor review is not an
-   optional extra step, it's the actual review gate.
+3. **One implementer, one different-vendor reviewer, every code PR.** An
+   agent implements a task and opens its own PR. For any PR that changes
+   code, a *different* agent — always a different vendor, never the
+   implementer reviewing itself — checks that PR against its acceptance
+   contract before it's marked ready for human review. Same-vendor
+   self-review is never sufficient; cross-vendor review is not an optional
+   extra step, it's the actual review gate for code. Non-code PRs (docs,
+   specs, content) skip the cross-vendor code-review gate but still go
+   through the same issue → PR → human-merge flow and ordinary human review —
+   see [FR-011](specs/github-task-workflow.md) for the exact boundary.
 4. **Human-gated merge only.** No automation ever merges a PR. A human reads
    the PR description, the tests, and the cross-vendor review comment, and
    merges by hand — or doesn't.
@@ -37,9 +85,16 @@ are in [`specs/github-task-workflow.md`](specs/github-task-workflow.md).
 
 ## Reference implementation: Omnigent / Polly
 
-This repo ships a complete, working implementation of the pattern above using
+This repo ships a working implementation of the *execution and review* half
+of the pattern above (implement → cross-vendor review → human merge) using
 [Omnigent](https://github.com/omnigent-ai/omnigent)'s Polly multi-agent
-orchestrator:
+orchestrator. **The spec → issues decomposition step (pattern item 1 above)
+is not yet built** — there is no shipped decomposition skill in this repo.
+Until it lands, treat "spec-first decomposition" as the intended front door
+this workflow is designed around, with issue breakdown done by hand (or with
+ad-hoc agent help) in the meantime; see the Bootstrapping Note in
+[`specs/github-task-workflow.md`](specs/github-task-workflow.md) for the
+current status of that gap. What *is* fully implemented:
 
 - **`config.yaml`** (repo root) — Polly's own orchestrator config: the
   seven-worker roster, dispatch rules, guardrails.
@@ -80,30 +135,57 @@ Omnigent bundle-loader constraint, confirmed from its own parser source).
 Two separate mechanisms, because skills and agent bundles have different
 discovery requirements.
 
-### 1. Skills — global symlink (shared across every project on the machine)
+**Platform requirement:** this repo assumes a POSIX shell environment.
+The `agents/*/config.yaml` `terminals` blocks run `bash`/`zsh`, the roster
+preflight in the root `config.yaml` shells out to `command -v`, and the
+commands below are written for bash/zsh. Windows is supported only via WSL
+or an equivalent POSIX shell — there's no native `cmd.exe`/PowerShell path.
 
-Skills use Omnigent's native machine-global skill discovery: anything under
-`~/.agents/skills/` is picked up automatically, in any project. One checkout
-of this repo's `skills/` serves every project on the machine; updates are a
-manual `git pull`, visible everywhere immediately.
+### 1. Skills — global symlinks, one per skill (shared across every project on the machine)
+
+Skills use Omnigent's native machine-global skill discovery: it scans the
+**immediate children** of `~/.agents/skills/`, and each child directory must
+itself directly contain a `SKILL.md`. That means each skill needs its own
+symlink under `~/.agents/skills/` — a single symlink to this repo's whole
+`skills/` directory does NOT work, because the parser would then look for
+`~/.agents/skills/agent-dev-kit/SKILL.md` (one level too shallow) instead of
+`~/.agents/skills/agent-dev-kit/cross-review/SKILL.md`. Verified against the
+real installed Omnigent parser (`omnigent.spec.parser.discover_host_skills`):
+symlinks are followed fine (it's plain `Path.is_dir()`/`Path.exists()` calls),
+the depth is what matters.
 
 ```bash
 # One-time, per machine — not per project:
 git clone https://github.com/<you>/agent-dev-kit.git ~/src/agent-dev-kit
 mkdir -p ~/.agents/skills
-ln -s ~/src/agent-dev-kit/skills ~/.agents/skills/agent-dev-kit
+for skill in cross-review fanout investigate; do
+  ln -s ~/src/agent-dev-kit/skills/"$skill" ~/.agents/skills/"$skill"
+done
 
 # Later, to update:
 cd ~/src/agent-dev-kit && git pull
 ```
 
-### 2. Agent bundles — pinned git submodule (per repo)
+### 2. Agent bundles — pinned git submodule (per repo, recommended)
 
-Omnigent's bundle loader requires a bundle root to physically contain
-`config.yaml` at its own top level, with `agents/<name>/config.yaml` as
-direct children — no indirection, no parent-walking. A global symlink can't
-satisfy that, so agent bundles are vendored per-repo via a submodule instead,
-independently pinned:
+Omnigent's bundle loader requires a bundle root to contain `config.yaml` at
+its own top level, with `agents/<name>/config.yaml` as direct children — no
+`config_path` indirection, no parent-walking. Verified against the installed
+parser (`omnigent.spec.parser.parse` + `omnigent.spec.validator.validate`): a
+bundle root that is itself a symlink to a real checkout also parses and
+validates cleanly (the loader uses plain `Path.is_dir()`/`.exists()` calls,
+which follow symlinks) — so a symlink is not actually forbidden here the way
+the depth requirement above is a hard constraint for skills.
+
+We still recommend a **pinned git submodule** over a bare symlink for agent
+bundles, because a submodule lets each consumer repo independently pin the
+exact commit of `agent-dev-kit` it runs against — a breaking change to, say,
+`codex`'s harness config can roll out to one repo at a time instead of every
+consumer of a shared checkout simultaneously. A symlink to a shared local
+checkout works today but ties every consumer repo to whatever commit that
+one checkout happens to be on, the same trade-off skills deliberately accept
+(see above) — for bundles specifically, independent pinning is worth the
+extra submodule step.
 
 ```bash
 # Inside your consumer repo:
