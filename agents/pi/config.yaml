@@ -31,25 +31,40 @@ prompt: |
   Always return a clear, structured result: your findings, with file:line
   evidence. Note anything that did not fit the task.
 
+# read_only_os (below) only denies the direct file-write tool calls
+# (Write/Edit/MultiEdit, sys_os_write/edit) — it does NOT reach a shell tool,
+# so sandbox.type: none left sys_os_shell free to bypass it entirely
+# (`printf x > file`, `sed -i`, `rm`, `git commit -am`, all otherwise ALLOW).
+# `type: auto` picks the OS-appropriate real sandbox (linux_bwrap /
+# darwin_seatbelt) and, since write_paths is left at its empty default, mounts
+# cwd read-only at the kernel level for the ENTIRE Pi subprocess tree —
+# including its shell tool — so those same commands now fail as OS
+# permission errors instead of silently succeeding. Genuinely closes the
+# shell escape hatch instead of trying to pattern-match write-shaped
+# commands, which is what the (still useful, layered) policies below do.
+# read_paths / cwd_allow_hidden grant just enough read access for ordinary
+# review commands (git log/diff/blame need ~/.gitconfig and cwd's .git/,
+# both otherwise masked) without widening any write access.
 os_env:
   type: caller_process
   cwd: .
   sandbox:
-    type: none
+    type: auto
+    read_paths: ["~/.gitconfig"]
+    cwd_allow_hidden: [".venv", ".git"]
 
 # Pi is review/explore/search-only — it never opens a PR and has no
 # legitimate reason to write a file or push, unlike the implementer bundles
 # (claude_code/codex/opencode/cursor/hermes/agy) this guardrails block was
 # originally copied from. read_only_os hard-denies every file-mutating tool
-# call outright, and blast_radius runs with its protective default
-# (gate_pushes: true) so a shell-level push/PR-merge/deploy still has to
-# clear approval instead of being silently allowed. The catastrophic DENY
-# set (force-push, rm -rf /, hard-reset to a remote ref) is denied either way.
+# call outright (belt), the os_env.sandbox above hard-denies shell-mediated
+# writes at the OS level (suspenders — closes exactly the gap the belt
+# alone misses), and blast_radius denies push/PR-merge/deploy outright
+# (risky_action: DENY, not the ASK default) since Pi has no legitimate case
+# where a human should be prompted to let it push. The catastrophic set
+# (force-push, rm -rf /, hard-reset to a remote ref) was already
+# unconditionally denied either way.
 guardrails:
-  # Pi is the only polly child gated on the runner ASK path (claude_code /
-  # codex gate via their native hooks, which wait a day) — match that window
-  # instead of auto-denying while the human reads the approval card.
-  ask_timeout: 86400
   policies:
     read_only_os:
       type: function
@@ -63,3 +78,7 @@ guardrails:
         path: omnigent.inner.nessie.policies.blast_radius
         arguments:
           gate_pushes: true
+          risky_action: DENY
+          deny_reason: >-
+            Pi is review/explore/search-only and never pushes, merges, or
+            deploys — that's the implementer's job, and its own PR.

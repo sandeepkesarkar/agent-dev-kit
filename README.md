@@ -10,20 +10,28 @@ orchestrator.
 
 "Cross-vendor reviewed" and "human-gated merge" describe the *review and
 merge* gates, not a sandbox. **This workflow does not run untrusted agents in
-a sandbox by default.** As shipped, every sub-agent bundle in `agents/` runs
-with the caller's full process environment (`os_env: { type: caller_process,
+a sandbox by default.** As shipped, every *implementer* sub-agent bundle in
+`agents/` (`claude_code`/`codex`/`opencode`/`cursor`/`hermes`/`agy`) runs with
+the caller's full process environment (`os_env: { type: caller_process,
 sandbox: { type: none } }`), and several individual settings deliberately
 widen that further:
 
 - `permission_mode: auto` (`claude_code`) and `yolo: true` (`cursor`) —
   headless workers can't answer interactive approval prompts, so these
   auto-approve actions rather than blocking on a human who isn't there.
-- `gate_pushes: false` (every agent bundle, and the root `config.yaml`) —
-  implementers push branches and open PRs unattended; only the catastrophic
-  `blast_radius` set (force-push, `rm -rf /`, hard-reset to a remote ref)
-  is still denied.
+- `gate_pushes: false` (every implementer bundle, and the root
+  `config.yaml`) — implementers push branches and open PRs unattended; only
+  the catastrophic `blast_radius` set (force-push, `rm -rf /`, hard-reset to
+  a remote ref) is still denied.
 - `spawn: true` (root `config.yaml`) — Polly can launch additional
   self-defined child sessions beyond the declared roster.
+
+`pi` is the one exception, matching its narrower review/explore/search-only
+role: it runs under a real OS sandbox (`os_env.sandbox.type: auto` — resolves
+to `linux_bwrap`/`darwin_seatbelt`), which mounts its worktree read-only at
+the kernel level, and `gate_pushes: true` with `risky_action: DENY` — Pi
+never opens a PR, so push/merge/deploy are denied outright rather than
+allowed or even asked for.
 
 None of this is an oversight — it's what makes autonomous, unattended
 dispatch across seven coding vendors actually work. But it means an agent in
@@ -36,11 +44,12 @@ content as untrusted input to a fairly privileged process. Concretely:
   or secrets you wouldn't hand to code you haven't read — not on a
   workstation with your primary SSH keys, cloud credentials, or password
   manager unlocked in the same environment.
-- Prefer running each worker's `os_env.sandbox` under an actual sandbox
-  (Omnigent supports sandbox types beyond `none`) when your deployment can
-  afford the friction; this repo ships the permissive `none` baseline so the
-  reference implementation works out of the box, not because sandboxing is
-  undesirable.
+- Prefer running each *implementer* worker's `os_env.sandbox` under an actual
+  sandbox (Omnigent supports sandbox types beyond `none` — see `pi`'s
+  `agents/pi/config.yaml` for a working example) when your deployment can
+  afford the friction; this repo ships the permissive `none` baseline for
+  implementers so the reference implementation works out of the box, not
+  because sandboxing is undesirable.
 - Add your own `cost_budget` guardrail (see the note near the bottom of
   `config.yaml`) before pointing this at a paid provider account.
 
