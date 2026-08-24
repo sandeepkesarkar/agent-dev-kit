@@ -37,19 +37,29 @@ os_env:
   sandbox:
     type: none
 
-# Implementers open their own PRs, so push / gh pr create are allowed
-# (gate_pushes: false). Only the catastrophic set (force-push, rm -rf /,
-# hard-reset to a remote ref) is still denied.
+# Pi is review/explore/search-only — it never opens a PR and has no
+# legitimate reason to write a file or push, unlike the implementer bundles
+# (claude_code/codex/opencode/cursor/hermes/agy) this guardrails block was
+# originally copied from. read_only_os hard-denies every file-mutating tool
+# call outright, and blast_radius runs with its protective default
+# (gate_pushes: true) so a shell-level push/PR-merge/deploy still has to
+# clear approval instead of being silently allowed. The catastrophic DENY
+# set (force-push, rm -rf /, hard-reset to a remote ref) is denied either way.
 guardrails:
   # Pi is the only polly child gated on the runner ASK path (claude_code /
   # codex gate via their native hooks, which wait a day) — match that window
   # instead of auto-denying while the human reads the approval card.
   ask_timeout: 86400
   policies:
+    read_only_os:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.read_only_os
     blast_radius:
       type: function
       on: [tool_call]
       function:
         path: omnigent.inner.nessie.policies.blast_radius
         arguments:
-          gate_pushes: false
+          gate_pushes: true
