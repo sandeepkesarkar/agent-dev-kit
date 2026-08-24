@@ -14,6 +14,16 @@ evaluators (never by inspecting YAML text), that:
 - Pi's actual os_env.sandbox config genuinely blocks shell-mediated writes
   (redirection, sed -i, rm, git commit) at the OS level, while ordinary
   review commands (cat/grep/ls/git log/diff/blame) keep working.
+- PiExecutor._try_sandbox_pi() itself (not just the lower-level
+  resolve_sandbox()/backend calls) actually wraps the Pi CLI launch path
+  when sandbox construction succeeds (round-3 review finding: the round-2
+  test never called _try_sandbox_pi, so it couldn't have caught this).
+- The KNOWN, TRACKED gap round-3 review found: _try_sandbox_pi() fails OPEN
+  (silently unsandboxed) when sandbox construction raises OSError/
+  ImportError/NotImplementedError — asserted explicitly so an omnigent
+  upgrade that changes this gets noticed, not silently assumed away. See
+  README.md "Known limitations" for why this can't be forced fail-closed
+  from this bundle's YAML alone, and the compensating controls in place.
 
 Requires the ``omnigent`` package (0.10.0+) on the interpreter running this
 file — install it (``uv tool install omnigent`` or equivalent) or point
@@ -213,6 +223,87 @@ def test_os_sandbox_blocks_shell_mediated_writes_and_allows_reads() -> None:
         assert (repo / "tracked.txt").read_text() == "hello\n", "sed -i should not have landed"
 
 
+def test_try_sandbox_pi_wraps_pi_cli_when_construction_succeeds() -> None:
+    """
+    Exercises PiExecutor._try_sandbox_pi() itself (not just the lower-level
+    resolve_sandbox()/backend calls) using Pi's actual parsed os_env spec:
+    proves the real Pi CLI launch path gets wrapped in the sandbox rather
+    than assuming it does because resolve_sandbox() succeeds in isolation.
+    """
+    if not _sandbox_binary_available():
+        print(f"SKIP: no sandbox backend binary for {sys.platform!r} on this host.")
+        return
+
+    from omnigent.inner.pi_executor import _try_sandbox_pi
+
+    _spec, pi = _parsed_pi_spec()
+    os_env_spec = pi.os_env
+    assert os_env_spec.sandbox is not None and os_env_spec.sandbox.type != "none"
+
+    with tempfile.TemporaryDirectory(prefix="pi-sandbox-wrap-test-") as tmp:
+        cwd = pathlib.Path(tmp).resolve()
+        scoped_spec = os_env_spec.__class__(**{**os_env_spec.__dict__, "cwd": str(cwd)})
+        # A fake pi binary path is fine here: _try_sandbox_pi only needs a
+        # string to embed in the generated launcher, never executes it.
+        fake_pi_path = str(cwd / "fake" / "bin" / "pi")
+        result = _try_sandbox_pi(pi_path=fake_pi_path, os_env=scoped_spec, cwd=str(cwd))
+
+        assert result.sandboxed is True, "expected pi's real config to produce an active sandbox"
+        assert result.launch_path != fake_pi_path, (
+            "sandboxed=True but launch_path is the raw pi_path — not actually wrapped"
+        )
+        assert pathlib.Path(result.launch_path).exists(), "wrapper launcher script should exist"
+
+
+def test_try_sandbox_pi_fails_open_when_sandbox_construction_errors() -> None:
+    """
+    KNOWN, TRACKED GAP (see README.md "Known limitations"): omnigent 0.10.0's
+    _try_sandbox_pi() catches OSError/ImportError/NotImplementedError from
+    sandbox construction and silently falls back to running Pi COMPLETELY
+    UNSANDBOXED rather than refusing to start. agents/pi/config.yaml cannot
+    override this from the bundle YAML alone — there is no require_sandbox
+    flag or startup hook in this omnigent version.
+
+    This test forces that exact failure (a monkeypatched resolve_sandbox
+    that raises OSError, simulating a missing bwrap/sandbox-exec binary) and
+    asserts on the CURRENT fail-open result. It exists so an omnigent
+    upgrade that changes this to fail closed gets NOTICED (this assertion
+    would start failing) instead of the gap being silently assumed to still
+    be there.
+    """
+    import omnigent.inner.sandbox as sandbox_module
+    from omnigent.inner.pi_executor import _try_sandbox_pi
+
+    _spec, pi = _parsed_pi_spec()
+    os_env_spec = pi.os_env
+    assert os_env_spec.sandbox is not None and os_env_spec.sandbox.type != "none"
+
+    original_resolve_sandbox = sandbox_module.resolve_sandbox
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated: bwrap/sandbox-exec binary not found on PATH")
+
+    sandbox_module.resolve_sandbox = _boom
+    try:
+        with tempfile.TemporaryDirectory(prefix="pi-sandbox-failopen-test-") as tmp:
+            cwd = pathlib.Path(tmp).resolve()
+            scoped_spec = os_env_spec.__class__(**{**os_env_spec.__dict__, "cwd": str(cwd)})
+            fake_pi_path = str(cwd / "fake" / "bin" / "pi")
+            result = _try_sandbox_pi(pi_path=fake_pi_path, os_env=scoped_spec, cwd=str(cwd))
+    finally:
+        sandbox_module.resolve_sandbox = original_resolve_sandbox
+
+    # This is the documented, known-bad behavior — asserted so it's tracked,
+    # not because it's desired. See README.md "Known limitations".
+    assert result.sandboxed is False, (
+        "sandbox construction failure no longer fails open — omnigent's behavior changed; "
+        "update README.md's Known limitations section and Pi's config comment to match"
+    )
+    assert result.launch_path == fake_pi_path, (
+        "expected the unsandboxed fallback to launch pi_path directly"
+    )
+
+
 _TESTS = [
     test_full_bundle_parses_and_validates,
     test_read_only_os_denies_write_tools,
@@ -222,6 +313,8 @@ _TESTS = [
     test_blast_radius_allows_reads_and_non_push_shell,
     test_blast_radius_alone_does_not_stop_shell_mediated_writes,
     test_os_sandbox_blocks_shell_mediated_writes_and_allows_reads,
+    test_try_sandbox_pi_wraps_pi_cli_when_construction_succeeds,
+    test_try_sandbox_pi_fails_open_when_sandbox_construction_errors,
 ]
 
 

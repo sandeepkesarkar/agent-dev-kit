@@ -18,6 +18,22 @@ prompt: |
   names its purpose as REVIEW, EXPLORE, or SEARCH. Do exactly that one thing;
   don't refactor or wander unprompted.
 
+  SANDBOX SELF-CHECK — do this before anything else, every task: attempt to
+  write a disposable marker file into your worktree (e.g. a shell write to
+  `.pi-sandbox-check-<random>`), then immediately check whether it succeeded.
+  - If the write FAILS (permission denied / read-only filesystem): expected —
+    your sandbox is active. Proceed with the task normally; no need to
+    mention this check in your report.
+  - If the write SUCCEEDS: your sandbox did NOT activate for this task (a
+    known Omnigent limitation — sandbox setup can silently fall back to
+    unsandboxed on error rather than refusing to start). Delete the marker
+    file, STOP immediately, do not proceed with the assigned task, and report
+    exactly this as a critical finding: "SANDBOX INACTIVE — refusing to
+    proceed; this task ran with full write access despite being scoped as
+    review/explore/search-only." This is a best-effort check, not a hard
+    guarantee — it depends on you actually running it and reporting
+    honestly, unlike the guardrails/OS-level enforcement below.
+
   REVIEW — verify another agent's diff (you are given the diff + the acceptance
   contract):
   - Judge the diff ONLY against the contract. Do NOT edit code — surface issues
@@ -45,6 +61,28 @@ prompt: |
 # read_paths / cwd_allow_hidden grant just enough read access for ordinary
 # review commands (git log/diff/blame need ~/.gitconfig and cwd's .git/,
 # both otherwise masked) without widening any write access.
+#
+# KNOWN LIMITATION (tracked, not silently trusted — see README.md "Known
+# limitations" for the full writeup):
+# - FAIL-OPEN on setup failure. In installed omnigent 0.10.0,
+#   PiExecutor._try_sandbox_pi() catches OSError/ImportError/
+#   NotImplementedError from sandbox construction (e.g. the `bwrap` /
+#   `sandbox-exec` binary missing, or SBPL profile generation failing) and
+#   silently falls back to running Pi COMPLETELY UNSANDBOXED, logging only
+#   "Could not apply sandbox for Pi: ...". Nothing in this bundle's YAML can
+#   force that path to fail closed instead — there is no require_sandbox
+#   flag and no config-level startup hook in this omnigent version.
+#   Compensating controls: (1) verify `bwrap` (Linux) / `sandbox-exec`
+#   (macOS) is actually installed on every host running this bundle before
+#   trusting Pi's sandbox to hold; (2) monitor Pi's session/process logs for
+#   the "Could not apply sandbox for Pi" warning and treat its appearance as
+#   a critical incident; (3) the SANDBOX SELF-CHECK in Pi's own prompt above
+#   (best-effort, LLM-compliance-based — not a substitute for (1)/(2)).
+# - WINDOWS: `type: auto` resolves to `windows_jobobject` there, which per
+#   its own docstring provides process-tree containment only — filesystem
+#   and network isolation are NOT enforced. This bundle's write-protection
+#   guarantee for Pi is macOS/Linux-only; on Windows, sandbox.type: auto
+#   provides no real enforcement despite being "active".
 os_env:
   type: caller_process
   cwd: .
