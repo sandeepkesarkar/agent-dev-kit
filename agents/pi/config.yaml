@@ -18,6 +18,22 @@ prompt: |
   names its purpose as REVIEW, EXPLORE, or SEARCH. Do exactly that one thing;
   don't refactor or wander unprompted.
 
+  SANDBOX SELF-CHECK — do this before anything else, every task: attempt to
+  write a disposable marker file into your worktree (e.g. a shell write to
+  `.pi-sandbox-check-<random>`), then immediately check whether it succeeded.
+  - If the write FAILS (permission denied / read-only filesystem): expected —
+    your sandbox is active. Proceed with the task normally; no need to
+    mention this check in your report.
+  - If the write SUCCEEDS: your sandbox did NOT activate for this task (a
+    known Omnigent limitation — sandbox setup can silently fall back to
+    unsandboxed on error rather than refusing to start). Delete the marker
+    file, STOP immediately, do not proceed with the assigned task, and report
+    exactly this as a critical finding: "SANDBOX INACTIVE — refusing to
+    proceed; this task ran with full write access despite being scoped as
+    review/explore/search-only." This is a best-effort check, not a hard
+    guarantee — it depends on you actually running it and reporting
+    honestly, unlike the guardrails/OS-level enforcement below.
+
   REVIEW — verify another agent's diff (you are given the diff + the acceptance
   contract):
   - Judge the diff ONLY against the contract. Do NOT edit code — surface issues
@@ -31,25 +47,76 @@ prompt: |
   Always return a clear, structured result: your findings, with file:line
   evidence. Note anything that did not fit the task.
 
+# read_only_os (below) only denies the direct file-write tool calls
+# (Write/Edit/MultiEdit, sys_os_write/edit) — it does NOT reach a shell tool,
+# so sandbox.type: none left sys_os_shell free to bypass it entirely
+# (`printf x > file`, `sed -i`, `rm`, `git commit -am`, all otherwise ALLOW).
+# `type: auto` picks the OS-appropriate real sandbox (linux_bwrap /
+# darwin_seatbelt) and, since write_paths is left at its empty default, mounts
+# cwd read-only at the kernel level for the ENTIRE Pi subprocess tree —
+# including its shell tool — so those same commands now fail as OS
+# permission errors instead of silently succeeding. Genuinely closes the
+# shell escape hatch instead of trying to pattern-match write-shaped
+# commands, which is what the (still useful, layered) policies below do.
+# read_paths / cwd_allow_hidden grant just enough read access for ordinary
+# review commands (git log/diff/blame need ~/.gitconfig and cwd's .git/,
+# both otherwise masked) without widening any write access.
+#
+# KNOWN LIMITATION (tracked, not silently trusted — see README.md "Known
+# limitations" for the full writeup):
+# - FAIL-OPEN on setup failure. In installed omnigent 0.10.0,
+#   PiExecutor._try_sandbox_pi() catches OSError/ImportError/
+#   NotImplementedError from sandbox construction (e.g. the `bwrap` /
+#   `sandbox-exec` binary missing, or SBPL profile generation failing) and
+#   silently falls back to running Pi COMPLETELY UNSANDBOXED, logging only
+#   "Could not apply sandbox for Pi: ...". Nothing in this bundle's YAML can
+#   force that path to fail closed instead — there is no require_sandbox
+#   flag and no config-level startup hook in this omnigent version.
+#   Compensating controls: (1) verify `bwrap` (Linux) / `sandbox-exec`
+#   (macOS) is actually installed on every host running this bundle before
+#   trusting Pi's sandbox to hold; (2) monitor Pi's session/process logs for
+#   the "Could not apply sandbox for Pi" warning and treat its appearance as
+#   a critical incident; (3) the SANDBOX SELF-CHECK in Pi's own prompt above
+#   (best-effort, LLM-compliance-based — not a substitute for (1)/(2)).
+# - WINDOWS: `type: auto` resolves to `windows_jobobject` there, which per
+#   its own docstring provides process-tree containment only — filesystem
+#   and network isolation are NOT enforced. This bundle's write-protection
+#   guarantee for Pi is macOS/Linux-only; on Windows, sandbox.type: auto
+#   provides no real enforcement despite being "active".
 os_env:
   type: caller_process
   cwd: .
   sandbox:
-    type: none
+    type: auto
+    read_paths: ["~/.gitconfig"]
+    cwd_allow_hidden: [".venv", ".git"]
 
-# Implementers open their own PRs, so push / gh pr create are allowed
-# (gate_pushes: false). Only the catastrophic set (force-push, rm -rf /,
-# hard-reset to a remote ref) is still denied.
+# Pi is review/explore/search-only — it never opens a PR and has no
+# legitimate reason to write a file or push, unlike the implementer bundles
+# (claude_code/codex/opencode/cursor/hermes/agy) this guardrails block was
+# originally copied from. read_only_os hard-denies every file-mutating tool
+# call outright (belt), the os_env.sandbox above hard-denies shell-mediated
+# writes at the OS level (suspenders — closes exactly the gap the belt
+# alone misses), and blast_radius denies push/PR-merge/deploy outright
+# (risky_action: DENY, not the ASK default) since Pi has no legitimate case
+# where a human should be prompted to let it push. The catastrophic set
+# (force-push, rm -rf /, hard-reset to a remote ref) was already
+# unconditionally denied either way.
 guardrails:
-  # Pi is the only polly child gated on the runner ASK path (claude_code /
-  # codex gate via their native hooks, which wait a day) — match that window
-  # instead of auto-denying while the human reads the approval card.
-  ask_timeout: 86400
   policies:
+    read_only_os:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.read_only_os
     blast_radius:
       type: function
       on: [tool_call]
       function:
         path: omnigent.inner.nessie.policies.blast_radius
         arguments:
-          gate_pushes: false
+          gate_pushes: true
+          risky_action: DENY
+          deny_reason: >-
+            Pi is review/explore/search-only and never pushes, merges, or
+            deploys — that's the implementer's job, and its own PR.

@@ -10,20 +10,64 @@ orchestrator.
 
 "Cross-vendor reviewed" and "human-gated merge" describe the *review and
 merge* gates, not a sandbox. **This workflow does not run untrusted agents in
-a sandbox by default.** As shipped, every sub-agent bundle in `agents/` runs
-with the caller's full process environment (`os_env: { type: caller_process,
+a sandbox by default.** As shipped, every *implementer* sub-agent bundle in
+`agents/` (`claude_code`/`codex`/`opencode`/`cursor`/`hermes`/`agy`) runs with
+the caller's full process environment (`os_env: { type: caller_process,
 sandbox: { type: none } }`), and several individual settings deliberately
 widen that further:
 
 - `permission_mode: auto` (`claude_code`) and `yolo: true` (`cursor`) —
   headless workers can't answer interactive approval prompts, so these
   auto-approve actions rather than blocking on a human who isn't there.
-- `gate_pushes: false` (every agent bundle, and the root `config.yaml`) —
-  implementers push branches and open PRs unattended; only the catastrophic
-  `blast_radius` set (force-push, `rm -rf /`, hard-reset to a remote ref)
-  is still denied.
+- `gate_pushes: false` (every implementer bundle, and the root
+  `config.yaml`) — implementers push branches and open PRs unattended; only
+  the catastrophic `blast_radius` set (force-push, `rm -rf /`, hard-reset to
+  a remote ref) is still denied.
 - `spawn: true` (root `config.yaml`) — Polly can launch additional
   self-defined child sessions beyond the declared roster.
+
+`pi` is the one exception, matching its narrower review/explore/search-only
+role: it runs under a real OS sandbox (`os_env.sandbox.type: auto` — resolves
+to `linux_bwrap`/`darwin_seatbelt`), which mounts its worktree read-only at
+the kernel level, and `gate_pushes: true` with `risky_action: DENY` — Pi
+never opens a PR, so push/merge/deploy are denied outright rather than
+allowed or even asked for. **Read "Known limitations" below before trusting
+that sandbox** — it does not hold on every host or in every failure mode.
+
+### Known limitations (`pi`'s sandbox specifically)
+
+- **Fails open on setup failure, not closed.** In the installed Omnigent
+  version this repo targets (0.10.0), `PiExecutor._try_sandbox_pi()` catches
+  `OSError`/`ImportError`/`NotImplementedError` raised while constructing the
+  sandbox (e.g. the `bwrap` (Linux) / `sandbox-exec` (macOS) binary missing,
+  or SBPL/profile generation failing for any reason) and silently falls back
+  to running Pi **completely unsandboxed**, logging only a warning
+  (`"Could not apply sandbox for Pi: ..."`). This is upstream Omnigent
+  behavior — there is no `require_sandbox` flag or config-level startup hook
+  in this version that `agents/pi/config.yaml` can use to force that path to
+  fail closed instead. `tests/test_pi_guardrails.py` includes a test that
+  forces this exact failure and asserts on the current (fail-open) result,
+  specifically so an Omnigent upgrade that changes this behavior gets
+  noticed instead of silently assumed. Compensating controls, since the
+  bundle can't force this on its own:
+  - Verify `bwrap` / `sandbox-exec` is actually installed on every host that
+    runs this bundle *before* trusting Pi's sandbox to hold — the resolver
+    fails at spawn time, not at config-validation time, so a missing binary
+    won't show up until Pi's first turn.
+  - Monitor Pi's session/process logs for the "Could not apply sandbox for
+    Pi" warning and treat its appearance as a critical incident (Pi ran a
+    task fully unsandboxed).
+  - Pi's own prompt (`agents/pi/config.yaml`) includes a best-effort
+    self-check: its first action every task is to attempt a disposable
+    write and abort with a critical report if it unexpectedly succeeds.
+    This depends on the model actually running the check and reporting
+    honestly — it is a soft signal, not a hard guarantee, and does not
+    substitute for the two mitigations above.
+- **No real enforcement on Windows.** `os_env.sandbox.type: auto` resolves
+  to `windows_jobobject` there, which (per its own Omnigent docstring)
+  provides process-tree containment only — filesystem and network
+  isolation are **not enforced**. Pi's write-protection guarantee in this
+  bundle is macOS/Linux-only; don't rely on it on a Windows host.
 
 None of this is an oversight — it's what makes autonomous, unattended
 dispatch across seven coding vendors actually work. But it means an agent in
@@ -36,11 +80,12 @@ content as untrusted input to a fairly privileged process. Concretely:
   or secrets you wouldn't hand to code you haven't read — not on a
   workstation with your primary SSH keys, cloud credentials, or password
   manager unlocked in the same environment.
-- Prefer running each worker's `os_env.sandbox` under an actual sandbox
-  (Omnigent supports sandbox types beyond `none`) when your deployment can
-  afford the friction; this repo ships the permissive `none` baseline so the
-  reference implementation works out of the box, not because sandboxing is
-  undesirable.
+- Prefer running each *implementer* worker's `os_env.sandbox` under an actual
+  sandbox (Omnigent supports sandbox types beyond `none` — see `pi`'s
+  `agents/pi/config.yaml` for a working example) when your deployment can
+  afford the friction; this repo ships the permissive `none` baseline for
+  implementers so the reference implementation works out of the box, not
+  because sandboxing is undesirable.
 - Add your own `cost_budget` guardrail (see the note near the bottom of
   `config.yaml`) before pointing this at a paid provider account.
 
