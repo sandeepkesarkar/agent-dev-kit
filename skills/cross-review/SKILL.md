@@ -20,9 +20,21 @@ non-silent fallback when Codex isn't available.
 ## Procedure
 1. Get the task's diff — `sys_os_shell("gh pr diff <pr>")` (or
    `git -C .worktrees/<task_id> diff main...HEAD`).
-2. Run the deterministic gates first — tests / lint / typecheck via
-   `sys_os_shell`. If red, re-dispatch the implementer to drive it green first;
-   don't involve the reviewer yet.
+2. Run the deterministic gates first — tests / lint / typecheck, diff
+   coverage, and integration tests, all via `sys_os_shell`, all BEFORE the
+   reviewer is ever dispatched:
+   - **Tests / lint / typecheck**: whatever the repo's own commands are.
+   - **Diff coverage** (not whole-repo coverage — a PR can't retroactively
+     cover legacy code it didn't touch, and this repo's own consumers may
+     have large, unrelated baselines): `coverage run -m pytest && coverage
+     xml && diff-cover coverage.xml --compare-branch=main --fail-under=97`
+     (the `diff-cover` package computes percent-covered specifically over the
+     PR's added/changed lines). Gate at 97%.
+   - **Integration tests**: run the project's integration suite if one
+     exists (e.g. `pytest tests/integration -v`) — check for a documented
+     integration-test entrypoint in the repo rather than guessing at a path.
+   If ANY of these are red or below threshold, re-dispatch the implementer to
+   drive it green first; don't involve the reviewer yet.
    If a pytest result's count must be recorded or reconciled, collect ground
    truth with `python -m pytest --collect-only -q <same files>` against the
    exact file set/command/commit the implementer reported. Never use
@@ -79,7 +91,9 @@ is needed for that to take effect on the next dispatch.
 - **Efficiency** — avoidable N+1s, redundant work, wrong complexity for the
   data size involved.
 - **Test coverage** — new behavior without a test exercising it; a test that
-  doesn't actually assert the thing it claims to.
+  doesn't actually assert the thing it claims to. Diff coverage must be
+  ≥97% of the PR's added/changed lines — this is the numeric gate enforced
+  in Procedure step 2, not a separate qualitative judgment call.
 
 ### 2. Security
 Baseline OWASP-shaped checks, plus this framework's own governance requirements:
@@ -96,6 +110,69 @@ Baseline OWASP-shaped checks, plus this framework's own governance requirements:
   irreversible external API calls) that isn't gated behind human approval
   where the task calls for one.
 
+### 3. Python engineering
+Applies whenever the diff touches `.py` files. Deliberately a fixed, bounded
+checklist of concrete, mechanically checkable items — not an open-ended
+"check for best practices" instruction. Extend it by adding a new bullet
+here when a NEW category proves worth catching repeatedly; don't let the
+reviewer improvise beyond this list for this dimension.
+- **Mutable default arguments** — `def f(x=[]):` / `def f(x={}):`. Must
+  default to `None` and initialize inside the function body.
+- **Bare/broad exception handling** — `except:` or `except Exception:` that
+  swallows an error with no re-raise, no logging, and no specific handling.
+  Catch the narrowest exception type the call can actually raise.
+- **Exception chaining** — re-raising inside an `except` block without
+  `raise NewError(...) from e`; a bare `raise NewError(...)` there discards
+  the original traceback.
+- **Resource handling** — files, sockets, DB connections, or locks acquired
+  without a `with` block, relying on manual `.close()`/`.release()` that gets
+  skipped on an exception path.
+- **Missing type hints** — new/changed public functions or methods lack type
+  hints in a file/module that otherwise uses them consistently. Check
+  neighboring code in the same file first — don't impose hints on a codebase
+  that doesn't use them.
+- **`is` vs `==`** — comparing to `None`, `True`, `False`, or a singleton
+  with `==` instead of `is`.
+- **Mutable global/module-level state** — introduced without a documented
+  reason; a hidden source of cross-test or cross-request contamination.
+- **Blocking calls inside `async def`** — a synchronous blocking call
+  (network I/O, disk I/O, `time.sleep`) inside an `async` function with no
+  `asyncio.to_thread`/async-client wrapper — stalls the event loop for every
+  other concurrent task.
+- **`print()` in production code paths** — instead of the project's logger,
+  outside CLI entry points and tests.
+- **Wildcard imports** — `from module import *` anywhere in the diff.
+- **Shadowing builtins** — a variable or parameter named `id`, `type`,
+  `list`, `dict`, `str`, etc., in a way that could confuse a later reader or
+  break a nearby use of the real builtin.
+
+### 4. Debuggability
+Language-agnostic — applies to every diff, not just Python. The goal: a
+human (or the next agent) can diagnose a failure from logs alone, without
+having to reproduce it locally first. Also fixed and bounded, same rule as
+Python engineering above — don't improvise beyond this list for this
+dimension:
+- **Silent error paths** — an `except`/error-handling branch (any language)
+  that suppresses, swallows, or rethrows an error without logging enough to
+  diagnose it later: what operation was running, what inputs/ids were
+  involved, and what specifically failed.
+- **Unlogged external calls and state changes** — a new external API call,
+  DB write, queue publish, or other side-effecting operation with no log
+  statement marking that it happened. Silence here is what makes production
+  incidents undebuggable after the fact.
+- **Context-free log messages** — a log statement that says an event
+  happened but omits the identifying data (task/request/entity id, the
+  specific input) needed to correlate it with one occurrence among many.
+- **Wrong log level** — a genuine failure logged at `debug`/`info` (invisible
+  in a production log floor) or a routine, expected event logged at
+  `error`/`warning` (trains responders to ignore real alerts).
+- **New non-trivial branches with no trace** — a new conditional path with
+  meaningfully different behavior (not a one-line guard clause) added with
+  no log statement indicating which branch was taken.
+- Cross-reference, don't duplicate: secrets/PII showing up IN a log line is
+  Security's "Secrets handling"/"PII handling" bullets, not this dimension —
+  flag it once, under Security.
+
 ## Notes
 - Cross-review requires a reviewer from a DIFFERENT vendor than the implementer,
   so it needs at least two AVAILABLE workers (per the roster preflight). If
@@ -111,3 +188,13 @@ Baseline OWASP-shaped checks, plus this framework's own governance requirements:
   reviewer edit never reaches the deliverable.
 - Non-blocking issues / suggestions go in the registry as follow-ups; they
   don't block the PR.
+- Step 2's diff-coverage gate requires the `diff-cover` package available in
+  the implementer's environment (`pip install diff-cover`) and a `main`
+  branch reachable from the worktree for `--compare-branch`. If either is
+  missing, fix the environment rather than skipping the gate — a silently
+  skipped coverage gate is worse than a blocked PR.
+- Steps 2 (tests/lint/typecheck/diff-coverage/integration) and 3 (Codex
+  dispatch) already satisfy R6, R7, and R9 of the pipeline's 11 requirements
+  by construction — every PR gets these gates and a cross-vendor review
+  before a human ever sees it, in that fixed order, with no separate
+  on-demand skill a model could skip invoking.
