@@ -63,10 +63,17 @@ agentic skill/bundle distribution chain (`agy`/`claude_code`/`codex`/
   Flag any tool call whose blast radius exceeds the stated job — e.g. a
   docs-only skill running `git push --force`, `rm -rf`, or touching
   credentials.
-- **AST04 — Insecure Metadata** (High): inspect the YAML frontmatter itself
-  for anything beyond plain scalar fields — unexpected nested structures,
+- **AST04 — Insecure Metadata** (High): inspect the YAML frontmatter for
   encoded/obfuscated strings, or content clearly meant to be parsed as
-  something other than descriptive metadata.
+  something other than descriptive metadata. A nested structure or extra
+  field is NOT itself a finding — different skill frameworks legitimately
+  use richer schemas (e.g. fieldkit's speckit skills carry
+  `metadata: {author, source}`, `compatibility`, `argument-hint`,
+  `user-invocable`; this repo's own skills are a plainer `name`+
+  `description` convention). Only flag a field whose VALUE is suspicious
+  (base64/hex blobs, unicode homoglyphs, zero-width characters, a value that
+  looks like an instruction rather than metadata) — never flag a field
+  merely for existing outside this repo's own two-field convention.
 - **AST05 — Untrusted External Instructions** (High): flag any skill that
   fetches instructions, prompts, or code from a URL at runtime without
   pinning it to a specific, verified version — live, mutable remote content
@@ -90,11 +97,18 @@ agentic skill/bundle distribution chain (`agy`/`claude_code`/`codex`/
   a corresponding inventory entry and went through an approval step before
   landing in a consumer repo, versus appearing with no record of how or why
   it was added.
-- **AST10 — Cross-Platform Reuse** (Medium): when a skill is shared across
-  this repo's multiple agent bundles, confirm its permission/metadata intent
-  survives in every bundle's own manifest format — flag a bundle where the
-  same skill's scope silently loosens because that harness's manifest has
-  no equivalent field.
+- **AST10 — Cross-Platform Reuse** (Medium): skills in this repo's own
+  architecture carry NO permission/scope fields of their own — frontmatter
+  is `name` + `description` only; every privilege setting
+  (`permission_mode`, `sandbox`, `gate_pushes`, `blast_radius`) lives
+  exclusively in `agents/*/config.yaml`. So don't look for a per-skill
+  manifest field to compare across bundles — it doesn't exist, and treating
+  its absence as a pass is vacuous. Check instead whether every agent
+  bundle's `config.yaml` that grants a given skill access scopes that
+  access consistently (same guardrails, same blast-radius denials) — a
+  skill effectively "loosens" only if one bundle's config grants it broader
+  tool/permission access than another bundle's config does for the same
+  skill.
 
 ## Notes
 - Distinct from `security-review`: that skill audits the application code a
