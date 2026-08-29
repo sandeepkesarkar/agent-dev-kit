@@ -128,18 +128,69 @@ not a placeholder. See [`skills/cross-review/SKILL.md`](skills/cross-review/SKIL
 Full mechanics — issue lifecycle, sizing heuristics, required PR contents —
 are in [`specs/github-task-workflow.md`](specs/github-task-workflow.md).
 
+## How the pipeline flows end to end
+
+Six of the eight skills below are new; `fanout`, `investigate`, and
+`cross-review` already existed (`cross-review` gained the mandatory gates
+and two new standing dimensions that cover the additions). Skills chain via
+two mechanisms, never a new event-driven hook: **model-driven routing** (the
+orchestrator brain matches a human's phrasing to a skill's `description:`)
+and **procedural composition** (a skill's own steps explicitly dispatch the
+next one — the same way `fanout` already auto-invokes `cross-review`).
+
+| Stage | Skill | Mode |
+|---|---|---|
+| 1. Requirements | [`requirements-gather`](skills/requirements-gather/SKILL.md) | Interactive — relentless Q&A, verbatim read-back, explicit approval |
+| 2. Spec | speckit (`specify`/`clarify`/`plan`/`tasks`) | Headless sub-agent, dispatched by step 1 |
+| 3. Decomposition | [`spec-to-issues`](skills/spec-to-issues/SKILL.md) | Interactive — sizes, orders, and labels tasks; second, distinct approval gate; files GitHub issues |
+| 4. Implementation | [`fanout`](skills/fanout/SKILL.md) | Async — one worktree + implementer per task; human walks away |
+| 5. Verification | [`cross-review`](skills/cross-review/SKILL.md) | Async, mandatory — tests/lint/typecheck, diff coverage ≥97%, integration tests, then cross-vendor (Codex) review |
+| On demand | [`pr-test-steps`](skills/pr-test-steps/SKILL.md), [`adversarial-review`](skills/adversarial-review/SKILL.md), [`security-review`](skills/security-review/SKILL.md), [`agentic-skill-review`](skills/agentic-skill-review/SKILL.md) | Callable any time before merge, from the interactive chat |
+| Any stage | [`investigate`](skills/investigate/SKILL.md) | Read-only delegated investigation, usable throughout |
+
+```mermaid
+flowchart TD
+    A["Human describes a feature<br/>Omnigent / Polly chat"] --> B["requirements-gather<br/>relentless questions"]
+    B --> C{"Full requirement<br/>read-back approved?"}
+    C -->|no| B
+    C -->|yes| D["Dispatch speckit chain<br/>specify -> clarify -> plan -> tasks"]
+    D --> E{"speckit-clarify found<br/>ambiguity?"}
+    E -->|PAUSED| F["Relay question to human<br/>in the same chat"]
+    F --> D
+    E -->|COMPLETE| G["spec.md / plan.md / tasks.md"]
+    G --> H["spec-to-issues<br/>size, order, label tasks"]
+    H --> I{"Issue breakdown<br/>approved?"}
+    I -->|no| H
+    I -->|yes| J["GitHub issues created<br/>agent-ready"]
+    J --> K["fanout<br/>worktree + implementer per task"]
+    K --> L["cross-review gates<br/>tests, lint, typecheck,<br/>diff coverage 97%+, integration"]
+    L -->|red| K
+    L -->|green| M["cross-review: Codex reviews diff<br/>Engineering, Security, Python, Debuggability"]
+    M -->|blocking issue| K
+    M -->|clean| N["PR marked ready"]
+    N -.-> O["pr-test-steps"]
+    N -.-> P["adversarial-review"]
+    N -.-> Q["security-review"]
+    N -.-> R["agentic-skill-review"]
+    N --> S["Human reviews and merges<br/>no automation ever merges"]
+```
+
+Solid arrows are the mandatory path; dashed arrows are the on-demand
+skills — callable any time before merge, never a required gate. No skill in
+this pipeline ever runs `git merge` or `gh pr merge` — see point 4 of
+[The pattern](#the-pattern) above.
+
 ## Reference implementation: Omnigent / Polly
 
-This repo ships a working implementation of the *execution and review* half
-of the pattern above (implement → cross-vendor review → human merge) using
+This repo ships a working implementation of the **full** pattern above —
+requirements gathering, spec-first decomposition, implementation,
+cross-vendor review, and human-gated merge — using
 [Omnigent](https://github.com/omnigent-ai/omnigent)'s Polly multi-agent
-orchestrator. **The spec → issues decomposition step (pattern item 1 above)
-is not yet built** — there is no shipped decomposition skill in this repo.
-Until it lands, treat "spec-first decomposition" as the intended front door
-this workflow is designed around, with issue breakdown done by hand (or with
-ad-hoc agent help) in the meantime; see the Bootstrapping Note in
-[`specs/github-task-workflow.md`](specs/github-task-workflow.md) for the
-current status of that gap. What *is* fully implemented:
+orchestrator. The one gap that remains is **issue pickup** (FR-004 in
+[`specs/github-task-workflow.md`](specs/github-task-workflow.md)): no
+poller or `agent-ready`-detection logic ships here, so a human or the
+consumer's own tooling has to hand an approved issue to `fanout` explicitly.
+What *is* fully implemented:
 
 - **`config.yaml`** (repo root) — Polly's own orchestrator config: the
   seven-worker roster, dispatch rules, guardrails.
@@ -148,11 +199,36 @@ current status of that gap. What *is* fully implemented:
   cross-vendor review, or explore a scoped task in its own git worktree.
   `pi` is scoped to review / explore / search only — it is never dispatched
   as a fanout implementer (see [`skills/fanout/SKILL.md`](skills/fanout/SKILL.md)).
-- **`skills/`** — the three orchestration skills Polly composes at runtime:
-  - [`cross-review`](skills/cross-review/SKILL.md) — verify a PR's diff with
-    an independent, different-vendor sub-agent.
+- **`skills/`** — eight orchestration skills Polly composes at runtime, from
+  first human contact to a merge-ready PR (see
+  [How the pipeline flows end to end](#how-the-pipeline-flows-end-to-end)
+  below for the full walkthrough and diagram):
+  - [`requirements-gather`](skills/requirements-gather/SKILL.md) — the front
+    door: gathers a feature's requirements from a human via relentless Q&A,
+    reads them back for explicit approval, then dispatches speckit's
+    specify/clarify/plan/tasks chain.
+  - [`spec-to-issues`](skills/spec-to-issues/SKILL.md) — turns an approved
+    spec's tasks into a sized, dependency-ordered, human-approved GitHub
+    issue breakdown.
   - [`fanout`](skills/fanout/SKILL.md) — run independent subtasks in
     parallel, each in its own worktree, each opening its own PR.
+  - [`cross-review`](skills/cross-review/SKILL.md) — verify a PR's diff with
+    an independent, different-vendor sub-agent; gates on tests, lint,
+    typecheck, diff coverage (≥97%), and integration tests before review,
+    then reviews against standing Engineering, Security, Python-engineering,
+    and Debuggability dimensions.
+  - [`pr-test-steps`](skills/pr-test-steps/SKILL.md) — on demand: turns a
+    PR's diff and acceptance contract into a runnable manual QA script.
+  - [`adversarial-review`](skills/adversarial-review/SKILL.md) — on demand:
+    hunts for hostile-input exploits a diff's contract doesn't rule out —
+    prompt injection, approval-flow bypass, identity spoofing, feature-logic
+    abuse.
+  - [`security-review`](skills/security-review/SKILL.md) — on demand: wraps
+    Claude Code's built-in `/security-review` for PR-scoped scans, or runs a
+    custom scope-partitioned sweep for whole-system coverage.
+  - [`agentic-skill-review`](skills/agentic-skill-review/SKILL.md) — on
+    demand: audits the *skills themselves* — not the code they produce —
+    against [OWASP's Agentic Skills Top 10](https://owasp.org/www-project-agentic-skills-top-10/).
   - [`investigate`](skills/investigate/SKILL.md) — delegate read-only
     investigation/debugging/audit work and synthesize only from returned
     reports.
