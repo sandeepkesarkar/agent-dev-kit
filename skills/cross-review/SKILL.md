@@ -29,7 +29,10 @@ non-silent fallback when Codex isn't available.
      have large, unrelated baselines): `coverage run -m pytest && coverage
      xml && diff-cover coverage.xml --compare-branch=main --fail-under=97`
      (the `diff-cover` package computes percent-covered specifically over the
-     PR's added/changed lines). Gate at 97%.
+     PR's added/changed lines). Gate at 97%. Install a pinned version range
+     (`pip install 'diff-cover>=9,<10'`), never an unpinned `pip install
+     diff-cover` — an unreviewed upstream release of a coverage tool
+     shouldn't be able to silently change what gates a merge.
    - **Integration tests**: run the project's integration suite if one
      exists (e.g. `pytest tests/integration -v`) — check for a documented
      integration-test entrypoint in the repo rather than guessing at a path.
@@ -189,7 +192,8 @@ dimension:
 - Non-blocking issues / suggestions go in the registry as follow-ups; they
   don't block the PR.
 - Step 2's diff-coverage gate requires the `diff-cover` package available in
-  the implementer's environment (`pip install diff-cover`) and a `main`
+  the implementer's environment, pinned per Procedure step 2
+  (`pip install 'diff-cover>=9,<10'`, not an unpinned install), and a `main`
   branch reachable from the worktree for `--compare-branch`. If either is
   missing, fix the environment rather than skipping the gate — a silently
   skipped coverage gate is worse than a blocked PR.
