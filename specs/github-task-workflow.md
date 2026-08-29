@@ -20,26 +20,33 @@ delegated to agents.
 
 ## Implementation status
 
-This spec describes the target shape of the full workflow. This repo ships
-the middle of that pipeline — **explicit dispatch of an already-identified
-task** through implement → cross-vendor review → human merge (see
-`skills/fanout/SKILL.md` and `skills/cross-review/SKILL.md`) — but **not**
-either end of it:
+This spec describes the target shape of the full workflow. This repo now
+ships requirements gathering, decomposition, dispatch, and review —
+everything except one end of the pipeline:
 
-- **Decomposition** (spec → proposed issue breakdown → human approval →
-  issues filed) — no decomposition skill ships in this repo. See FR-001,
-  FR-009, SC-001, and the Bootstrapping Note at the bottom of this spec.
+- **Requirements gathering + decomposition** (human intake → approved spec →
+  proposed issue breakdown → human approval → issues filed) — shipped via
+  `skills/requirements-gather/SKILL.md` (front door, dispatches speckit's
+  specify/clarify/plan/tasks chain) and `skills/spec-to-issues/SKILL.md`
+  (the breakdown skill FR-001/FR-009 called for). See FR-001, FR-009,
+  SC-001.
+- **Dispatch → implement → cross-vendor review → human merge** — shipped via
+  `skills/fanout/SKILL.md` and `skills/cross-review/SKILL.md`.
+- **On-demand review layer** — shipped via `skills/pr-test-steps/SKILL.md`,
+  `skills/adversarial-review/SKILL.md`, `skills/security-review/SKILL.md`,
+  and `skills/agentic-skill-review/SKILL.md`. Not required by this spec's
+  FRs directly, but implements R8/R10/R11 of this repo's broader pipeline
+  design.
 - **Issue pickup** (a worker agent autonomously detecting `agent-ready`
   issues on some cadence, or an equivalent documented manual-trigger flow) —
-  this repo ships no poller and no `agent-ready`-detection logic of any
-  kind, automated or manual. See FR-004.
+  still not shipped: no poller and no `agent-ready`-detection logic of any
+  kind, automated or manual. See FR-004. This is the one remaining gap.
 
-Concretely: nothing in this repo autonomously discovers *what* to work on.
-Once a human (or a consumer's own tooling) has identified a task — whether
-that's an approved issue or just a task description — dispatching it through
-`fanout`/`cross-review`/`investigate` to implement, review, and merge it
-works today. Everything upstream of "a task has been identified" is a
-documented gap, not a shipped capability.
+Concretely: everything from a human's first description of a feature through
+a merge-ready, cross-vendor-reviewed PR works today. The only undiscovered
+step is *autonomous* pickup of an already-filed `agent-ready` issue — a
+human or the consumer's own tooling still has to hand it to `fanout`
+explicitly (or wire up their own poller).
 
 ## Out of Scope (this iteration)
 
@@ -105,7 +112,7 @@ decomposition agent applies.
 
 ## Functional Requirements
 
-- **FR-001** *(not yet implemented — see Implementation status above)*: The
+- **FR-001** *(implemented — `skills/spec-to-issues/SKILL.md`)*: The
   decomposition agent MUST propose an issue breakdown from a spec and MUST
   NOT create any issue without explicit human approval of the breakdown.
 - **FR-002**: Every issue MUST carry at least one type label (`spec`, `code`,
@@ -134,10 +141,10 @@ decomposition agent applies.
   "Mermaid diagrams where applicable" MUST appear as standing acceptance
   criteria on every issue the decomposition agent creates — not just as an
   informal norm.
-- **FR-009** *(not yet implemented — see Implementation status above)*: The
-  spec→issues capability MUST be packaged as a reusable, invocable
-  skill/command — the front door to this workflow — usable from any consumer
-  repo.
+- **FR-009** *(implemented — `skills/spec-to-issues/SKILL.md`, fronted by
+  `skills/requirements-gather/SKILL.md`)*: The spec→issues capability MUST
+  be packaged as a reusable, invocable skill/command — the front door to
+  this workflow — usable from any consumer repo.
 - **FR-010**: The workflow MUST handle non-code deliverables (specs, docs,
   content) through the same issue-based flow, distinguished only by label.
 - **FR-011**: Every code PR MUST carry a cross-vendor review (from a vendor
@@ -159,9 +166,9 @@ decomposition agent applies.
 
 ## Success Criteria
 
-- **SC-001** *(not yet met — depends on FR-001/FR-009, not yet implemented)*:
-  A spec goes from "approved" to "issues filed on GitHub" via a single skill
-  invocation plus one human approval step.
+- **SC-001** *(met — `skills/spec-to-issues/SKILL.md`)*: A spec goes from
+  "approved" to "issues filed on GitHub" via a single skill invocation plus
+  one human approval step.
 - **SC-002**: 100% of agent-authored PRs carry the required narration (issue
   comment + PR description) before merge.
 - **SC-003**: Every merged PR was reviewable in under 15 minutes (spot-checked
@@ -186,20 +193,23 @@ decomposition agent applies.
 
 ## Bootstrapping Note
 
-Two capabilities described in this spec don't exist in this repo yet — both
-known gaps, not oversights (see Implementation status above):
+One capability described in this spec doesn't exist in this repo yet — a
+known gap, not an oversight (see Implementation status above):
 
-- The **decomposition skill** (FR-001/FR-009): a spec's first pass into
-  issues has to be done by hand, or with ad-hoc agent help but no packaged
-  skill, until this is built.
 - **Issue pickup** (FR-004): there is no poller and no `agent-ready`
   detection — automated or manual — shipped here. A human (or a consumer's
   own tooling) has to identify which task to work on and hand it to a
   worker explicitly.
 
-What works today, regardless of how a task got identified or an issue got
-created: dispatching that already-identified task through
-`fanout`/`cross-review` — implement, cross-vendor review, human merge. Once
-both gaps above are closed, the same dispatch mechanics become the back half
-of a fully autonomous "approved spec in, merged PR out" pipeline; today they
-are the whole of what this repo actually automates.
+The **decomposition skill** (FR-001/FR-009) gap this note originally flagged
+is now closed: `skills/requirements-gather/SKILL.md` gathers and gets human
+approval on requirements, then `skills/spec-to-issues/SKILL.md` turns the
+resulting spec into a sized, dependency-ordered, human-approved issue
+breakdown.
+
+What works today: a human describing a feature, through requirements
+gathering, spec generation, issue decomposition, dispatch, cross-vendor
+review, and human merge — the whole pipeline except autonomous discovery of
+*which already-filed issue* to pick up next. Closing FR-004 turns this into
+a fully autonomous "approved spec in, merged PR out" pipeline; today a human
+still triggers the dispatch step by hand once issues are filed.
