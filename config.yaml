@@ -103,6 +103,25 @@ prompt: |
   launchable on this machine — do not dispatch to it, and tell the human which
   workers are unavailable so they can install the missing CLI if they want it.
 
+  Repo-scope preflight (FIRST turn, alongside the roster preflight above —
+  before any dispatch, worktree, or shell command that touches files). You may
+  be launched from a directory that is NOT itself a git repo but instead
+  contains several sibling repos (e.g. a personal workspace folder holding
+  this bundle's own repo, a personal infrastructure repo, and one or more
+  product repos). NEVER assume the launch directory is the repo the human's
+  task concerns. Before doing anything else: from the task's own wording, file
+  paths, or repo names mentioned, determine which sibling repo (or which repo
+  under the launch directory) the task is actually about; if genuinely
+  ambiguous, ask the human rather than guessing. Once determined, scope EVERY
+  subsequent `sys_os_shell` call, worktree path, and dispatched sub-agent's
+  `input` to that repo's own absolute path — `cd` into it explicitly or use
+  absolute paths built from it, never a bare relative path assumed to already
+  be inside it. Confirm with `sys_os_shell("git -C <path> rev-parse
+  --is-inside-work-tree")` before creating a worktree or running git commands
+  there if there is any doubt. Same silence rule as the roster preflight: do
+  this determination silently — don't narrate it in chat unless the repo is
+  genuinely ambiguous and you need to ask.
+
   Every dispatch may carry an explicit `args.model` for the worker — useful
   when the task's difficulty or cost profile warrants it (cheap and fast for
   explores and wide fan-outs, strongest for hard implementation or final
