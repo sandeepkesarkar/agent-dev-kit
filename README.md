@@ -70,7 +70,7 @@ that sandbox** — it does not hold on every host or in every failure mode.
   bundle is macOS/Linux-only; don't rely on it on a Windows host.
 
 None of this is an oversight — it's what makes autonomous, unattended
-dispatch across seven coding vendors actually work. But it means an agent in
+dispatch across coding vendors actually work. But it means an agent in
 this workflow is executing repo content (and, once wired to GitHub issues,
 *issue* content — text anyone with issue-creation access can write) with
 host-level process access and no default sandbox boundary. Treat that
@@ -193,12 +193,15 @@ consumer's own tooling has to hand an approved issue to `fanout` explicitly.
 What *is* fully implemented:
 
 - **`config.yaml`** (repo root) — Polly's own orchestrator config: the
-  seven-worker roster, dispatch rules, guardrails.
-- **`agents/`** — one sub-agent bundle per coding vendor: `claude_code`,
-  `codex`, `opencode`, `cursor`, `hermes`, and `agy` each implement,
-  cross-vendor review, or explore a scoped task in its own git worktree.
-  `pi` is scoped to review / explore / search only — it is never dispatched
-  as a fanout implementer (see [`skills/fanout/SKILL.md`](skills/fanout/SKILL.md)).
+  two-worker roster (`claude_code` implements, `codex` reviews only — both
+  subscription-billed), dispatch rules, guardrails.
+- **`agents/`** — one sub-agent bundle per coding vendor. Only `claude_code`
+  and `codex` are declared in `config.yaml`'s `tools.agents`. The
+  `opencode`, `cursor`, `hermes`, `agy`, and `pi` bundles are still shipped
+  but undeclared: each of those harnesses reads its own local model config
+  and can silently bill a per-token API key, so opt one in (declare it and
+  restore its roster/routing text in the prompt) only after checking what
+  it bills.
 - **`skills/`** — eight orchestration skills Polly composes at runtime, from
   first human contact to a merge-ready PR (see
   [How the pipeline flows end to end](#how-the-pipeline-flows-end-to-end)
