@@ -318,12 +318,13 @@ extra submodule step.
 git submodule add https://github.com/<you>/agent-dev-kit.git .agents/agent-dev-kit
 git submodule update --init
 
+# default_agent must be an ABSOLUTE path (see note below), which is
+# machine-specific — so keep .omnigent/config.yaml out of git.
 mkdir -p .omnigent
-cat > .omnigent/config.yaml <<'EOF'
-default_agent: .agents/agent-dev-kit
-EOF
+printf 'default_agent: %s/.agents/agent-dev-kit\n' "$PWD" > .omnigent/config.yaml
+echo '.omnigent/config.yaml' >> .gitignore
 
-git add .gitmodules .agents/agent-dev-kit .omnigent/config.yaml
+git add .gitmodules .agents/agent-dev-kit .gitignore
 git commit -m "Wire up agent-dev-kit as the default Omnigent agent bundle"
 
 # Later, to pull in a newer pinned version:
@@ -331,6 +332,17 @@ cd .agents/agent-dev-kit && git pull origin main && cd -
 git add .agents/agent-dev-kit
 git commit -m "Bump agent-dev-kit submodule"
 ```
+
+**Why `default_agent` must be absolute:** the background Omnigent server
+resolves a relative `default_agent` against its *own* working directory,
+not your repo's — and it may have been started from anywhere, possibly days
+earlier. A relative `.agents/agent-dev-kit` then fails to resolve with no
+error, and Omnigent silently falls back to its built-in example Polly, whose
+roster includes workers (e.g. `hermes`, `pi`) that read their own local
+model config and can bill a per-token API key. Point it at the bundle root
+*directory*, not at `config.yaml` itself. To share the setup with other
+checkouts, commit a `.omnigent/config.example.yaml` with a placeholder path
+instead of the real file.
 
 Add your own `guardrails.policies.cost_budget` block to `config.yaml` (or a
 repo-local override) — this repo ships without one deliberately, since a $

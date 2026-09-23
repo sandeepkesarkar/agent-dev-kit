@@ -64,7 +64,9 @@ mattered. Because discovery is otherwise genuinely global:
 Sub-agent bundle configs (`config.yaml` at this repo's root, plus
 `agents/<name>/config.yaml`) are reached via a git submodule checked out at
 `.agents/agent-dev-kit/` inside each consumer repo, with the consumer's own
-`.omnigent/config.yaml` pointing `default_agent` at that submodule path.
+`.omnigent/config.yaml` pointing `default_agent` at that submodule path —
+as an **absolute** path (a relative one is resolved against the Omnigent
+server's cwd and silently falls back to the built-in agent; see README).
 
 This choice is driven by a real constraint in Omnigent's own bundle loader,
 confirmed by reading `omnigent.spec.parser.parse` /
