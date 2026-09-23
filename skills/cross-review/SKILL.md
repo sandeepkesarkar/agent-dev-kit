@@ -43,12 +43,11 @@ non-silent fallback when Codex isn't available.
    exact file set/command/commit the implementer reported. Never use
    `grep -c 'def test_'` as a pytest count: it counts functions, not collected
    cases, and misses parametrized case expansion.
-3. Dispatch **`codex`** as reviewer — pinned by default, not chosen from the
-   available roster. Exception: if the implementer itself was `codex`, or
-   `codex` isn't in this run's roster preflight, fall back to any other
-   AVAILABLE different-vendor worker (`claude_code`, `opencode`, `cursor`,
-   `hermes`, `agy`, `pi`) and say so explicitly in your report — a silent
-   substitution defeats the point of pinning a reviewer in the first place.
+3. Dispatch **`codex`** as reviewer — pinned, not chosen from the roster.
+   There is no fallback reviewer in this bundle: if `codex` isn't in this
+   run's roster preflight (or fails to boot), stop and tell the human —
+   never substitute another worker, since other harnesses can bill a
+   per-token API key.
    Use a task-based title such as `review-auth-refactor`, never the raw vendor
    name:
    `sys_session_send(agent="codex", title="review-<task_slug>",
@@ -185,8 +184,8 @@ dimension:
   human at the plan gate.
 - Give the reviewer ONLY the diff + contract — never the implementer's
   transcript or worktree. The cross-vendor independence is the whole point.
-- Review is a coding sub-agent (`claude_code`/`codex`/`opencode`/`cursor`/`hermes`/`agy`/`pi`) dispatched with
-  `purpose: "review"` — a DIFFERENT vendor from the one that built the diff. It
+- Review is the `codex` sub-agent dispatched with
+  `purpose: "review"` — a DIFFERENT vendor from `claude_code`, which built the diff. It
   reports issues and never edits; only the implementer opens a PR, so a stray
   reviewer edit never reaches the deliverable.
 - Non-blocking issues / suggestions go in the registry as follow-ups; they
